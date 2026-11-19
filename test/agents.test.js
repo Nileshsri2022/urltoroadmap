@@ -64,3 +64,45 @@ test('runPipeline publishes a draft when validation still fails after repair', a
   assert.equal(saved.review.reviewerApproved, true);
   assert.equal(saved.review.validation.valid, false);
 });
+
+function interviewStubs(overrides = {}) {
+  return {
+    nextQuestion: async () => ({ done: false, question: 'What is your level?' }),
+    playback: async () => ({ summary: 'You want Rust', bullets: ['b'], openQuestions: [] }),
+    approaches: async () => ({ approaches: [{ id: 'a', title: 'A', description: 'd', tradeoffs: 't' }], recommendedId: 'a' }),
+    ...overrides,
+  };
+}
+
+test('startBrainstorm creates a run, researches, and stores the first question', async () => {
+  const deps = stubs({ interview: interviewStubs() });
+  const { run, question } = await agents.startBrainstorm('rust', deps);
+  assert.equal(run.stage, 'questions');
+  assert.equal(question, 'What is your level?');
+  assert.equal(store.getRun(run.id).pendingQuestion, 'What is your level?');
+});
+
+test('answerQuestion moves to playback after the model says done', async () => {
+  const deps = stubs({ interview: interviewStubs({ nextQuestion: async () => ({ done: true }), playback: async () => ({ summary: 'S', bullets: ['b'], openQuestions: [] }) }) });
+  const { run } = await agents.startBrainstorm('rust', deps);
+  const out = await agents.answerQuestion(run.id, 'beginner', deps);
+  assert.equal(out.run.stage, 'playback');
+  assert.equal(out.run.playback.summary, 'S');
+  assert.equal(out.run.answers.length, 1);
+});
+
+test('confirmPlayback then chooseApproach reaches ready state', async () => {
+  const deps = stubs({ interview: interviewStubs({
+    nextQuestion: async () => ({ done: true }),
+    playback: async () => ({ summary: 'S', bullets: [], openQuestions: [] }),
+    approaches: async () => ({ approaches: [{ id: 'a', title: 'A', description: 'd', tradeoffs: 't' }], recommendedId: 'a' }),
+  }) });
+  const { run } = await agents.startBrainstorm('rust', deps);
+  await agents.answerQuestion(run.id, 'beginner', deps);
+  const confirmed = await agents.confirmPlayback(run.id, 'approve', null, deps);
+  assert.equal(confirmed.run.stage, 'approaches');
+  assert.equal(confirmed.run.approaches.length, 1);
+  const chosen = await agents.chooseApproach(run.id, 'auto', deps);
+  assert.equal(chosen.run.stage, 'ready');
+  assert.equal(chosen.run.chosenApproach.id, 'a');
+});
