@@ -17,9 +17,12 @@ const cardsEl = $('#cards');
 const emptyEl = $('#empty');
 const libCount = $('#libCount');
 const toastsEl = $('#toasts');
+const drawer = $('#agentDrawer');
+const btnDrawer = $('#btnDrawer');
 
 let generating = false;
 let currentRun = null;
+let drawerTab = 'orchestrator';
 
 /* ------------------------------------------------ utils */
 
@@ -71,6 +74,8 @@ function showView(el) {
   viewHome.classList.toggle('hidden', el !== viewHome);
   viewRoadmap.classList.toggle('hidden', el !== viewRoadmap);
   viewInterview.classList.toggle('hidden', el !== viewInterview);
+  // Home has no run loaded: retract the drawer and its trigger.
+  if (el === viewHome) hideDrawerUi();
 }
 
 function route() {
@@ -191,6 +196,7 @@ async function streamGeneration(runId) {
   const activityList = $('#activityList');
   if (activityList) activityList.innerHTML = '';
   addLog('orchestrator', 'Generation started for run: ' + runId);
+  openDrawer(currentRun); // watch the agents live as artifacts arrive
   agentbay.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
   try {
@@ -258,6 +264,14 @@ function handleEvent(evt) {
   }
   if (evt.type === 'artifact') {
     addLog('orchestrator', `Artifact saved: ${evt.kind}`);
+    // Live refresh: refetch the saved run and repaint only if the drawer is open.
+    const runId = evt.runId || currentRun?.id;
+    if (runId) {
+      api('/api/runs/' + runId).then((run) => {
+        currentRun = run;
+        if (!drawer.classList.contains('hidden')) renderDrawer(run);
+      }).catch(() => {});
+    }
     return;
   }
   if (evt.type === 'stage') {
@@ -406,12 +420,15 @@ async function showInterview(id) {
     run = await api(`/api/runs/${id}`);
   } catch (e) {
     currentRun = null;
+    hideDrawerUi();
     document.title = 'Interview unavailable — RoadmapForge';
     $('#chat').innerHTML = `<div class="bubble ai">Interview stage could not load: ${esc(e.message)}. <a href="#/">Go back to the library</a> and start a new brainstorm.</div>`;
     return;
   }
   if (run.stage === 'done') { location.hash = `#/run/${id}`; return; }
   currentRun = run;
+  btnDrawer.classList.remove('hidden');
+  if (!drawer.classList.contains('hidden')) renderDrawer(run);
   document.title = 'Brainstorm — RoadmapForge';
   renderInterview(run);
   // An SSE already streaming in this tab reports progress; only a refresh needs polling.
@@ -603,10 +620,14 @@ async function showRun(id) {
   let run;
   try { run = await api(`/api/runs/${id}`); }
   catch (e) {
+    hideDrawerUi();
     viewRoadmap.innerHTML = `<div class="rm-head"><a href="#/" class="back-link">← Back to library</a>
       <p style="margin-top:20px;color:var(--bad)">${esc(e.message)}</p></div>`;
     return;
   }
+  currentRun = run;
+  btnDrawer.classList.remove('hidden');
+  if (!drawer.classList.contains('hidden')) renderDrawer(run);
   document.title = `Agent Run — RoadmapForge`;
   viewRoadmap.innerHTML = runDashboardHtml(run);
   bindRunDashboard(run);
@@ -618,11 +639,11 @@ function runDashboardHtml(run) {
   const working = Object.values(ag).filter((a) => ['working', 'revising'].includes(a.status)).length;
   const allLogs = collectLogs(run);
 
-  const agentCards = Object.entries(ag).map(([key, a]) => `
+  const agentCards = Object.entries(ag).map(([key, a], i) => `
     <div class="run-agent-card" data-agent="${key}">
       <div class="ag-top">
         <span class="ag-icon">${a.icon || '🤖'}</span>
-        <div class="ag-name"><b>${esc(a.label)} <span class="muted">#${key === 'researcher' ? '01' : key === 'planner' ? '02' : '03'}</span></b><small>${esc(a.mcp || '')}</small></div>
+        <div class="ag-name"><b>${esc(a.label)} <span class="muted">#${String(i + 1).padStart(2, '0')}</span></b><small>${esc(a.mcp || '')}</small></div>
         <span class="ag-status st-${esc(a.status)}">${esc(STATUS_LABEL[a.status] || a.status)}</span>
       </div>
       <div class="run-agent-meta">
@@ -639,7 +660,7 @@ function runDashboardHtml(run) {
     <h1 class="rm-title" style="margin-top:16px">Agent Pipeline Dashboard</h1>
     <p class="rm-summary">Task: <b>${esc(run.input)}</b> · ${run.rounds || 1} round(s) · ${run.approved ? '<span class="tag tag-approved">🛡️ Reviewer approved</span>' : '<span class="tag">published with review notes</span>'}</p>
     <div class="stat-row">
-      <div class="stat"><b>3</b><span>Agents</span></div>
+      <div class="stat"><b>${Object.keys(ag).length}</b><span>Agents</span></div>
       <div class="stat"><b>${working}</b><span>Working</span></div>
       <div class="stat"><b>${completed}</b><span>Completed</span></div>
     </div>
@@ -706,6 +727,21 @@ function artifactsHtml(run) {
       ${(rs.sources || []).length ? `<div class="s-res">${rs.sources.map((x) => x.url ? `<a class="res-pill" href="${esc(x.url)}" target="_blank" rel="noopener">🔗 <span>${esc(x.label)}</span></a>` : `<span class="tag">${esc(x.label)}</span>`).join('')}</div>` : ''}
     </div>`);
   }
+  if (r.interview) {
+    const iv = r.interview;
+    const answers = iv.answers || [];
+    const playback = iv.playback || {};
+    const chosen = iv.chosenApproach || {};
+    parts.push(`
+    <div class="artifact-card">
+      <div class="artifact-head">💬 Interview — Interviewer</div>
+      ${answers.length ? `<div class="artifact-section">${answers.map((a) => `<p class="artifact-p"><b>${esc(a.q || '')}</b><br>${esc(a.a || '')}</p>`).join('')}</div>` : ''}
+      ${playback.summary ? `<p class="artifact-p"><b>Playback:</b> ${esc(playback.summary)}</p>` : ''}
+      ${(playback.bullets || []).length ? listSection('Playback bullets', playback.bullets) : ''}
+      ${(playback.openQuestions || []).length ? `<p class="artifact-p"><b>Open questions:</b> ${playback.openQuestions.map(esc).join(' · ')}</p>` : ''}
+      ${chosen.title ? `<p class="artifact-p"><b>Chosen approach:</b> ${esc(chosen.title)}</p>` : ''}
+    </div>`);
+  }
   if (r.review) {
     const rv = r.review;
     parts.push(`
@@ -750,10 +786,208 @@ function bindRunDashboard(run) {
   }
 }
 
+/* ------------------------------------------------ agent drawer (per-agent tabs) */
+
+// No run attached (home / saved roadmap): retract the trigger and close the panel.
+function hideDrawerUi() {
+  btnDrawer.classList.add('hidden');
+  drawer.classList.add('hidden');
+}
+
+function openDrawer(run) {
+  currentRun = run || currentRun;
+  drawer.classList.remove('hidden');
+  renderDrawer(currentRun);
+}
+
+function drawerSection(title, body) {
+  return `<div class="drawer-section"><h4>${esc(title)}</h4>${body}</div>`;
+}
+
+// Raw JSON is rendered in full — never sliced. The <pre> scrolls via CSS instead.
+function rawDetails(label, data) {
+  return `<details class="drawer-section"><summary>Raw JSON · ${esc(label)}</summary>
+    <button class="btn btn-ghost btn-sm drawer-copy" type="button">Copy JSON</button>
+    <pre class="drawer-pre drawer-json">${esc(JSON.stringify(data ?? null, null, 2))}</pre></details>`;
+}
+
+function sourcePills(title, items) {
+  if (!items || !items.length) return '';
+  const pills = items.map((x) => {
+    const label = typeof x === 'string' ? x : (x.label || x.title || x.url || '');
+    const url = typeof x === 'string' ? '' : x.url;
+    return url
+      ? `<a class="res-pill" href="${esc(url)}" target="_blank" rel="noopener">🔗 <span>${esc(label)}</span></a>`
+      : `<span class="tag">${esc(label)}</span>`;
+  }).join('');
+  return `<div class="drawer-section"><h4>${esc(title)}</h4><div class="s-res">${pills}</div></div>`;
+}
+
+function roadmapBrief(label, rm) {
+  if (!rm) return '';
+  const phases = rm.phases || [];
+  const phaseHtml = phases.map((p) => `
+    <li>${esc(p.title || '')}${p.goal ? ` — ${esc(p.goal)}` : ''}
+      ${(p.steps || []).length ? `<ul>${(p.steps || []).map((s) => `<li>${esc(s.title || '')}${s.detail ? `: ${esc(s.detail)}` : ''}</li>`).join('')}</ul>` : ''}
+    </li>`).join('');
+  return drawerSection(label, `
+    <p><b>${esc(rm.emoji || '')} ${esc(rm.title || '')}</b></p>
+    ${rm.summary ? `<p>${esc(rm.summary)}</p>` : ''}
+    ${rm.difficulty || rm.estimatedDuration ? `<p class="muted">Difficulty: ${esc(rm.difficulty || '—')} · Duration: ${esc(rm.estimatedDuration || '—')}</p>` : ''}
+    ${(rm.principles || []).length ? `<p><b>Principles:</b> ${rm.principles.map(esc).join(' · ')}</p>` : ''}
+    ${rm.milestoneProject ? `<p><b>Milestone:</b> ${esc(rm.milestoneProject)}</p>` : ''}
+    <p><b>${phases.length} phase(s)</b></p>
+    ${phases.length ? `<ol>${phaseHtml}</ol>` : '<p class="muted">No phases in this artifact.</p>'}`);
+}
+
+function orchestratorDrawer(run) {
+  const log = run.orchestratorLog || [];
+  const status = {
+    status: run.status || 'unknown',
+    stage: run.stage || '(legacy run — no stage field)',
+    rounds: run.rounds ?? 0,
+    approved: run.approved ?? null,
+    repairs: run.repairs ?? 0,
+    validation: run.validation || null,
+    startedAt: run.startedAt || null,
+    endedAt: run.endedAt || null,
+  };
+  const logHtml = log.length
+    ? log.map((l) => `<div class="log-line"><span class="log-agent la-orchestrator">${esc(l.agent || 'orchestrator')}</span><span class="log-msg">${esc(l.message || '')}</span><span class="log-ts">${fmtTime(l.ts)}</span></div>`).join('')
+    : '<p class="muted">No orchestrator log for this run.</p>';
+  return drawerSection('Run status', `<pre class="drawer-pre">${esc(JSON.stringify(status, null, 2))}</pre>`)
+    + drawerSection(`Orchestrator log (${log.length})`, logHtml)
+    + rawDetails('orchestratorLog', log);
+}
+
+function researcherDrawer(art) {
+  const rs = art.research;
+  if (!rs) return '<p class="muted">No research artifact saved for this run yet.</p>' + rawDetails('research', null);
+  return drawerSection('Research report', `
+      <p><b>${esc(rs.topic || '')}</b></p>
+      ${rs.purpose ? `<p>${esc(rs.purpose)}</p>` : ''}
+      ${rs.audience ? `<p><b>Audience:</b> ${esc(rs.audience)}</p>` : ''}`)
+    + listSection('Key concepts', rs.keyConcepts)
+    + listSection('Features / unlocks', rs.features)
+    + listSection('Prerequisites', rs.prerequisites)
+    + listSection('Common pitfalls', rs.pitfalls)
+    + listSection('Learning order', rs.learningOrder)
+    + listSection('Tools ecosystem', rs.toolsEcosystem)
+    + sourcePills('Resources', rs.resources)
+    + sourcePills('Sources', rs.sources)
+    + rawDetails('research', rs);
+}
+
+function interviewerDrawer(run, art) {
+  const iv = art.interview || {};
+  const answers = run.answers || iv.answers || [];
+  const pending = run.pendingQuestion || iv.pendingQuestion || null;
+  const playback = run.playback || iv.playback || null;
+  const approaches = run.approaches || iv.approaches || [];
+  const chosen = run.chosenApproach || iv.chosenApproach || null;
+
+  const transcript = answers.length
+    ? answers.map((a, i) => `<div class="drawer-section"><h4>Question ${i + 1}</h4><p><b>${esc(a.q || '')}</b></p><p>${esc(a.a || '')}</p></div>`).join('')
+    : '<p class="muted">No interview answers for this run.</p>';
+  let html = drawerSection(`Interview transcript (${answers.length})`, transcript);
+  if (pending) html += drawerSection('Pending question', `<p>${esc(pending)}</p>`);
+  if (playback) {
+    html += drawerSection('Playback', `
+      ${playback.summary ? `<p>${esc(playback.summary)}</p>` : ''}
+      ${(playback.bullets || []).length ? `<ul>${playback.bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}
+      ${(playback.openQuestions || []).length ? `<p><b>Open questions:</b> ${playback.openQuestions.map(esc).join(' · ')}</p>` : ''}`);
+  }
+  if (approaches.length) {
+    html += drawerSection('Approaches', approaches.map((a) => `
+      <div class="check-item${a.id === chosen?.id ? ' pass' : ''}"><span class="ci-icon">${a.id === chosen?.id ? '✓' : '○'}</span>
+      <div><b>${esc(a.title || '')}</b> <span class="muted">${esc(a.description || '')}</span>${a.tradeoffs ? `<br><small>${esc(a.tradeoffs)}</small>` : ''}</div></div>`).join(''));
+  }
+  if (chosen) html += drawerSection('Chosen approach', `<p><b>${esc(chosen.title || '')}</b></p><p>${esc(chosen.description || '')}</p>`);
+  html += rawDetails('interview', { answers, pendingQuestion: pending, playback, approaches, chosenApproach: chosen });
+  return html;
+}
+
+function plannerDrawer(art) {
+  const parts = [];
+  if (art.outline) parts.push(roadmapBrief('Outline', art.outline));
+  if (art.roadmapDraft) parts.push(roadmapBrief('Roadmap draft', art.roadmapDraft));
+  if (art.roadmap) parts.push(roadmapBrief('Final roadmap', art.roadmap));
+  if (!parts.length) parts.push('<p class="muted">No planner artifacts saved for this run yet.</p>');
+  parts.push(rawDetails('planner', {
+    outline: art.outline || null,
+    roadmapDraft: art.roadmapDraft || null,
+    roadmap: art.roadmap || null,
+  }));
+  return parts.join('');
+}
+
+function reviewerDrawer(run, art) {
+  const rv = art.review;
+  if (!rv) return '<p class="muted">No review artifact saved for this run yet.</p>' + rawDetails('review', null);
+  const validation = run.validation || rv.validation || null;
+  let html = drawerSection('Review result', `
+    <p><b class="${rv.approved ? 'txt-good' : 'txt-warn'}">${rv.approved ? 'APPROVED' : 'CORRECTIONS REQUESTED'}</b>
+      · Score: ${esc(rv.score ?? '—')}/10 · Rounds: ${esc(run.rounds ?? 1)}</p>
+    ${validation ? `<pre class="drawer-pre">${esc(JSON.stringify(validation, null, 2))}</pre>` : '<p class="muted">No validation record for this run.</p>'}`);
+  if ((rv.checklist || []).length) {
+    html += drawerSection('Checklist', `<div class="checklist">${rv.checklist.map((c) => `
+      <div class="check-item ${c.passed ? 'pass' : 'fail'}"><span class="ci-icon">${c.passed ? '✓' : '✗'}</span>
+      <div><b>${esc(c.item || '')}</b> <span class="muted">— ${esc(c.note || '')}</span></div></div>`).join('')}</div>`);
+  }
+  if ((rv.issues || []).length) {
+    html += drawerSection('Issues', `<div class="review-issues">${rv.issues.map((i) => `<div class="issue">⚠️ <b>${esc(i.problem || '')}</b> → ${esc(i.fix || '')}</div>`).join('')}</div>`);
+  }
+  html += rawDetails('review', validation ? { review: rv, validation } : rv);
+  return html;
+}
+
+function renderDrawer(run) {
+  const r = run || {};
+  const art = r.artifacts || {};
+  let html = '';
+  if (drawerTab === 'orchestrator') html = orchestratorDrawer(r);
+  else if (drawerTab === 'researcher') html = researcherDrawer(art);
+  else if (drawerTab === 'interviewer') html = interviewerDrawer(r, art);
+  else if (drawerTab === 'planner') html = plannerDrawer(art);
+  else if (drawerTab === 'reviewer') html = reviewerDrawer(r, art);
+  $('#drawerBody').innerHTML = html;
+  $$('#drawerTabs .dtab').forEach((t) => t.classList.toggle('active', t.dataset.tab === drawerTab));
+}
+
+function bindDrawerTabs() {
+  $$('#drawerTabs .dtab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      drawerTab = tab.dataset.tab;
+      renderDrawer(currentRun);
+    });
+  });
+}
+
+function bindDrawer() {
+  btnDrawer.addEventListener('click', () => openDrawer(currentRun));
+  $('#drawerClose').addEventListener('click', () => drawer.classList.add('hidden'));
+  bindDrawerTabs();
+  // Delegated once: copies the full raw JSON for the expanded section.
+  $('#drawerBody').addEventListener('click', (e) => {
+    const btn = e.target.closest('.drawer-copy');
+    if (!btn) return;
+    const pre = btn.parentElement.querySelector('.drawer-json');
+    if (!pre || !navigator.clipboard?.writeText) {
+      toast('Clipboard unavailable — select the JSON text to copy', 'info');
+      return;
+    }
+    navigator.clipboard.writeText(pre.textContent).then(
+      () => toast('Raw JSON copied'),
+      () => toast('Could not copy — select the JSON text manually', 'err'),
+    );
+  });
+}
+
 /* ------------------------------------------------ roadmap view */
 
 async function showRoadmap(id) {
   showView(viewRoadmap);
+  hideDrawerUi(); // saved roadmap view has no live run attached
   window.scrollTo(0, 0);
   viewRoadmap.innerHTML = `<div class="rm-head" style="color:var(--text-faint)">Loading roadmap…</div>`;
   let rm;
@@ -1030,5 +1264,6 @@ $('#btnMcpTest').addEventListener('click', async () => {
 
 /* ------------------------------------------------ boot */
 
+bindDrawer();
 route();
 loadLibrary();

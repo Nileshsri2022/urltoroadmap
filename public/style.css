@@ -777,3 +777,19 @@ li.error .pi::after { content: "!"; position: absolute; inset: 0; display: grid;
 .bubble ul { margin: 8px 0 0 18px; }
 .bubble p { margin-top: 8px; }
 
+/* ---------- agent drawer ---------- */
+.drawer { position: fixed; top: 0; right: 0; height: 100vh; width: min(520px, 96vw); z-index: 60;
+  display: flex; flex-direction: column; background: rgba(10,12,20,.98); border-left: 1px solid var(--border);
+  box-shadow: -20px 0 60px rgba(0,0,0,.45); transform: translateX(0); transition: transform .2s ease; }
+.drawer.hidden { transform: translateX(102%); pointer-events: none; }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.drawer-tabs { display: flex; gap: 4px; overflow-x: auto; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.dtab { white-space: nowrap; padding: 7px 10px; border-radius: 8px; border: 0; background: transparent; color: var(--text-dim); cursor: pointer; font: inherit; }
+.dtab.active { color: var(--text); background: rgba(124,92,255,.16); }
+.drawer-body { overflow: auto; padding: 14px 16px 40px; }
+.drawer-section { margin-bottom: 18px; }
+.drawer-section h4 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-faint); }
+.drawer-pre { white-space: pre-wrap; word-break: break-word; font: 12px/1.5 ui-monospace, monospace; background: rgba(0,0,0,.35); padding: 10px; border-radius: 8px; }
+.drawer-json { max-height: 320px; overflow: auto; }
+@media (max-width: 720px) { .drawer { width: 100vw; } }
+

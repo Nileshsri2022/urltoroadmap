@@ -25,6 +25,7 @@
       <span class="brand-name">Roadmap<em>Forge</em></span>
     </a>
     <nav class="topnav">
+      <button class="btn btn-ghost btn-sm hidden" id="btnDrawer" type="button">Agents</button>
       <button class="btn btn-ghost btn-sm" id="btnSettings" type="button">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Settings
@@ -133,6 +134,21 @@
       </div>
     </div>
   </main>
+
+  <aside class="drawer hidden" id="agentDrawer" aria-label="Agent responses">
+    <div class="drawer-head">
+      <b>Agent responses</b>
+      <button class="icon-btn" id="drawerClose" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-tabs" id="drawerTabs">
+      <button class="dtab active" data-tab="orchestrator" type="button">Orchestrator</button>
+      <button class="dtab" data-tab="researcher" type="button">Researcher</button>
+      <button class="dtab" data-tab="interviewer" type="button">Interviewer</button>
+      <button class="dtab" data-tab="planner" type="button">Planner</button>
+      <button class="dtab" data-tab="reviewer" type="button">Reviewer</button>
+    </div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </aside>
 
   <!-- SETTINGS MODAL -->
   <div class="modal-backdrop hidden" id="settingsModal">
