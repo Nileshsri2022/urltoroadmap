@@ -12,7 +12,6 @@ const mcp = require('./lib/mcp');
 const llm = require('./lib/llm');
 const extract = require('./lib/extract');
 const composio = require('./lib/composio');
-const agents = require('./lib/agents');
 
 const PORT = process.env.PORT || 8787;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -28,21 +27,24 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
-const server = http.createServer(async (req, res) => {
-  try {
-    const url = new URL(req.url, 'http://localhost');
-    const pathname = decodeURIComponent(url.pathname);
-
-    if (pathname.startsWith('/api/')) return await handleApi(req, res, pathname);
-    return serveStatic(res, pathname);
-  } catch (e) {
-    sendJson(res, 500, { error: e.message || 'Server error' });
-  }
-});
+function createServer(deps = {}) {
+  const resolved = { agents: deps.agents || require('./lib/agents') };
+  return http.createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      const pathname = decodeURIComponent(url.pathname);
+      if (pathname.startsWith('/api/')) return await handleApi(req, res, pathname, resolved);
+      return serveStatic(res, pathname);
+    } catch (e) {
+      sendJson(res, 500, { error: e.message || 'Server error' });
+    }
+  });
+}
 
 // ---------------------------------------------------------------- API
 
-async function handleApi(req, res, pathname) {
+async function handleApi(req, res, pathname, deps) {
+  let m;
   if (pathname === '/api/settings' && req.method === 'GET') {
     const s = store.loadSettings();
     return sendJson(res, 200, {
@@ -96,7 +98,7 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, 200, { roadmaps: store.listRoadmaps() });
   }
 
-  let m = pathname.match(/^\/api\/roadmaps\/([^/]+)$/);
+  m = pathname.match(/^\/api\/roadmaps\/([^/]+)$/);
   if (m) {
     const id = m[1];
     if (req.method === 'GET') {
@@ -114,9 +116,40 @@ async function handleApi(req, res, pathname) {
     }
   }
 
+  if (pathname === '/api/brainstorm/start' && req.method === 'POST') {
+    const body = await readJson(req);
+    const input = String((body || {}).input || '').trim();
+    if (!input) return sendJson(res, 400, { error: 'Give me a link or a topic first.' });
+    return sendJson(res, 200, await deps.agents.startBrainstorm(input));
+  }
+
+  m = pathname.match(/^\/api\/runs\/([^/]+)\/answer$/);
+  if (m && req.method === 'POST') {
+    const body = await readJson(req);
+    return sendJson(res, 200, await deps.agents.answerQuestion(m[1], (body || {}).answer));
+  }
+
+  m = pathname.match(/^\/api\/runs\/([^/]+)\/confirm$/);
+  if (m && req.method === 'POST') {
+    const body = await readJson(req);
+    return sendJson(res, 200, await deps.agents.confirmPlayback(m[1], (body || {}).action, (body || {}).edits));
+  }
+
+  m = pathname.match(/^\/api\/runs\/([^/]+)\/approach$/);
+  if (m && req.method === 'POST') {
+    const body = await readJson(req);
+    return sendJson(res, 200, await deps.agents.chooseApproach(m[1], (body || {}).approachId));
+  }
+
+  // Keep the single-run SSE route ahead of the exact /api/generate one-shot check.
+  m = pathname.match(/^\/api\/generate\/([^/]+)$/);
+  if (m && req.method === 'POST') {
+    return generateRun(req, res, m[1], deps.agents);
+  }
+
   if (pathname === '/api/generate' && req.method === 'POST') {
     const body = await readJson(req);
-    return generate(req, res, String((body || {}).input || '').trim());
+    return generate(req, res, String((body || {}).input || '').trim(), deps.agents);
   }
 
   m = pathname.match(/^\/api\/runs\/([^/]+)$/);
@@ -136,14 +169,10 @@ async function handleApi(req, res, pathname) {
 
 // ---------------------------------------------------------------- pipeline (3 agents + orchestrator)
 
-async function generate(req, res, input) {
-  if (!input) return sendJson(res, 400, { error: 'Give me a link or a topic first.' });
-
-  const settings = store.loadSettings();
-  if (!settings.apiKey || !settings.baseUrl || !settings.model) {
-    return sendJson(res, 400, { error: 'Configure your AI settings first (Base URL, API key, Model).' });
-  }
-
+// Shared SSE setup for both generation routes. Always returns a real send
+// function: failRun() emits an error event with no guard, so generation must
+// never be handed a null writer.
+function startSse(req, res) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache, no-transform',
@@ -152,7 +181,28 @@ async function generate(req, res, input) {
   });
   const send = (evt) => { try { res.write('data: ' + JSON.stringify(evt) + '\n\n'); } catch {} };
   req.on('close', () => { res.destroy(); });
+  return send;
+}
 
+async function generateRun(req, res, runId, agents) {
+  const send = startSse(req, res);
+  try {
+    await agents.runGeneration(runId, send);
+  } catch {
+    // error event already emitted inside the generation
+  }
+  res.end();
+}
+
+async function generate(req, res, input, agents) {
+  if (!input) return sendJson(res, 400, { error: 'Give me a link or a topic first.' });
+
+  const settings = store.loadSettings();
+  if (!settings.apiKey || !settings.baseUrl || !settings.model) {
+    return sendJson(res, 400, { error: 'Configure your AI settings first (Base URL, API key, Model).' });
+  }
+
+  const send = startSse(req, res);
   try {
     await agents.runPipeline(input, send);
   } catch {
@@ -266,6 +316,9 @@ function demoRoadmap() {
   };
 }
 
-server.listen(PORT, () => {
-  console.log(`RoadmapForge running → http://127.0.0.1:${PORT}`);
-});
+if (require.main === module) {
+  const server = createServer();
+  server.listen(PORT, () => console.log(`RoadmapForge running → http://127.0.0.1:${PORT}`));
+}
+
+module.exports = { createServer };
