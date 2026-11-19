@@ -1,0 +1,13 @@
+{
+  "name": "roadmap-forge",
+  "version": "1.0.0",
+  "description": "Paste any link or topic — get a complete, saved learning roadmap. Powered by any OpenAI-compatible AI + the Superpowers MCP skill server.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
