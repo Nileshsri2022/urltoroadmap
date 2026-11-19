@@ -201,11 +201,19 @@ function startSse(req, res) {
 }
 
 async function generateRun(req, res, runId, agents) {
-  const send = startSse(req, res);
+  const rawSend = startSse(req, res);
+  let terminalSent = false;
+  const send = (evt) => {
+    if (evt && (evt.type === 'error' || evt.type === 'done')) terminalSent = true;
+    rawSend(evt);
+  };
   try {
     await agents.runGeneration(runId, send);
-  } catch {
-    // error event already emitted inside the generation
+  } catch (e) {
+    // Pre-try throws (Run not found / duplicate generation) emit nothing on
+    // their own. Only synthesize the error if the pipeline did not already
+    // send a terminal event, so fail()+rethrow cannot yield two terminals.
+    if (!terminalSent) send({ type: 'error', message: '[generate] ' + e.message + ' — check the run id, or retry after the active generation finishes.' });
   }
   res.end();
 }
@@ -218,11 +226,16 @@ async function generate(req, res, input, agents) {
     return sendJson(res, 400, { error: 'Configure your AI settings first (Base URL, API key, Model).' });
   }
 
-  const send = startSse(req, res);
+  const rawSend = startSse(req, res);
+  let terminalSent = false;
+  const send = (evt) => {
+    if (evt && (evt.type === 'error' || evt.type === 'done')) terminalSent = true;
+    rawSend(evt);
+  };
   try {
     await agents.runPipeline(input, send);
-  } catch {
-    // error event already emitted inside the pipeline
+  } catch (e) {
+    if (!terminalSent) send({ type: 'error', message: '[generate] ' + e.message + ' — check Settings, then retry with a new link or topic.' });
   }
   res.end();
 }

@@ -227,6 +227,13 @@ async function streamGeneration(runId) {
     let buf = '';
     let done = false;
 
+    const handleRecord = (chunk) => {
+      if (!chunk.startsWith('data:')) return;
+      const evt = JSON.parse(chunk.slice(5).trim());
+      handleEvent(evt);
+      if (evt.type === 'done' || evt.type === 'error') done = true;
+    };
+
     while (true) {
       const { value, done: rdone } = await reader.read();
       if (rdone) break;
@@ -235,12 +242,18 @@ async function streamGeneration(runId) {
       while ((idx = buf.indexOf('\n\n')) !== -1) {
         const chunk = buf.slice(0, idx);
         buf = buf.slice(idx + 2);
-        if (!chunk.startsWith('data:')) continue;
-        const evt = JSON.parse(chunk.slice(5).trim());
-        handleEvent(evt);
-        if (evt.type === 'done' || evt.type === 'error') done = true;
+        handleRecord(chunk);
       }
       if (done) break;
+    }
+    // Clean EOF with no terminal event used to leave `generating` stuck and
+    // genBtn disabled. Flush a trailing data: record with no closing \n\n so a
+    // final terminal event counts, then synthesize a failure only if none did.
+    if (!done && buf.startsWith('data:')) {
+      try { handleRecord(buf); } catch { /* incomplete trailing record — fall through */ }
+    }
+    if (!done) {
+      handleEvent({ type: 'error', message: 'Generation stage ended before a result — check the run status or retry from the interview.' });
     }
   } catch (e) {
     handleEvent({ type: 'error', message: e.message });
