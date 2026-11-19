@@ -12,6 +12,7 @@ const mcp = require('./lib/mcp');
 const llm = require('./lib/llm');
 const extract = require('./lib/extract');
 const composio = require('./lib/composio');
+const skills = require('./lib/skills');
 
 const PORT = process.env.PORT || 8787;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -53,6 +54,9 @@ async function handleApi(req, res, pathname, deps) {
       hasKey: Boolean(s.apiKey),
       apiKeyPreview: maskKey(s.apiKey),
       composioKeyPreview: maskKey(s.composioToken),
+      methodologySource: s.methodologySource,
+      superpowersPath: s.superpowersPath,
+      callCharBudget: s.callCharBudget,
     });
   }
   if (pathname === '/api/settings' && req.method === 'POST') {
@@ -64,6 +68,9 @@ async function handleApi(req, res, pathname, deps) {
       hasKey: Boolean(s.apiKey),
       apiKeyPreview: maskKey(s.apiKey),
       composioKeyPreview: maskKey(s.composioToken),
+      methodologySource: s.methodologySource,
+      superpowersPath: s.superpowersPath,
+      callCharBudget: s.callCharBudget,
     });
   }
 
@@ -83,6 +90,7 @@ async function handleApi(req, res, pathname, deps) {
       mcp.status(s.mcpUrl),
       composio.status(s.composioUrl, s.composioToken),
     ]);
+    const methodology = await skills.loadMethodology(s);
     return sendJson(res, 200, {
       ai: { ok: Boolean(s.apiKey && s.baseUrl && s.model), model: s.model, hasKey: Boolean(s.apiKey) },
       superpowers: superpowers.status === 'fulfilled'
@@ -91,6 +99,14 @@ async function handleApi(req, res, pathname, deps) {
       composio: s.composioToken
         ? (composioSt.status === 'fulfilled' ? composioSt.value : { ok: false, error: composioSt.reason?.message || 'failed' })
         : { ok: false, error: 'No Composio token configured — Researcher will use native fetch' },
+      methodology: {
+        ok: methodology.ok,
+        source: methodology.source,     // auto-resolved: local | mcp | off
+        path: methodology.path || null,
+        totalChars: methodology.totalChars,
+        skills: skills.skillChars(methodology.skills),
+        error: methodology.error || null,
+      },
     });
   }
 

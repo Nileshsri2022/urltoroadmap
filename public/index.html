@@ -173,12 +173,26 @@
         <input id="setModel" type="text" placeholder="gpt-4o-mini" spellcheck="false">
       </label>
 
+      <label class="field">
+        <span>Methodology source</span>
+        <select id="setMethodology">
+          <option value="auto">Auto — local skills, then MCP</option>
+          <option value="local">Local skills only</option>
+          <option value="mcp">MCP only</option>
+          <option value="off">Off</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Superpowers skills folder</span>
+        <input id="setSuperpowersPath" type="text" placeholder="C:\Users\you\.config\opencode\skills" spellcheck="false">
+        <small class="field-hint">Leave empty to auto-detect. Env SUPERPOWERS_PATH overrides.</small>
+      </label>
+      <label class="field">
+        <span>Prompt budget per call (characters)</span>
+        <input id="setBudget" type="number" min="4000" step="1000" value="24000">
+        <small class="field-hint">Larger budgets need a model with a higher TPM limit.</small>
+      </label>
       <div class="field-row">
-        <label class="toggle">
-          <input id="setMcp" type="checkbox" checked>
-          <span class="toggle-track"></span>
-          <span>Use Superpowers MCP methodology</span>
-        </label>
         <button class="btn btn-ghost btn-sm" id="btnMcpTest" type="button">Test MCP</button>
       </div>
       <label class="field">

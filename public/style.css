@@ -686,6 +686,7 @@ li.error .pi::after { content: "!"; position: absolute; inset: 0; display: grid;
 .txt-good { color: var(--good); }
 .txt-warn { color: var(--warn); }
 .tag-approved { color: var(--good); border-color: rgba(52, 211, 153, 0.35); background: rgba(52, 211, 153, 0.08); }
+.tag-draft { color: var(--warn); border-color: rgba(245, 158, 11, .4); background: rgba(245, 158, 11, .08); }
 
 /* ---------- artifacts ---------- */
 .artifact-card {

@@ -117,6 +117,19 @@ async function loadLibrary() {
   }
 }
 
+function reviewBadges(rm) {
+  const val = rm.review?.validation;
+  if (!val) return '';
+  const out = [];
+  if (!val.valid) out.push('<span class="tag tag-draft">Draft — incomplete</span>');
+  const cov = val.coverage;
+  if (cov) {
+    const c = cov.concepts || {}, p = cov.pitfalls || {};
+    out.push(`<span class="tag">Coverage: concepts ${esc(c.covered ?? 0)}/${esc(c.total ?? 0)} · pitfalls ${esc(p.covered ?? 0)}/${esc(p.total ?? 0)}</span>`);
+  }
+  return out.join('');
+}
+
 function cardHtml(rm) {
   const hue = hueOf(rm.title || rm.id);
   const pct = rm.stepTotal ? Math.round((rm.stepDone / rm.stepTotal) * 100) : 0;
@@ -138,7 +151,7 @@ function cardHtml(rm) {
       <span class="tag diff-${esc(rm.difficulty || 'intermediate')}">${esc(rm.difficulty || 'intermediate')}</span>
       ${rm.estimatedDuration ? `<span class="tag">⏱ ${esc(rm.estimatedDuration)}</span>` : ''}
       <span class="tag">${rm.phaseCount} phases · ${rm.stepTotal} steps</span>
-      ${srcTag}${reviewTag}
+      ${srcTag}${reviewTag}${reviewBadges(rm)}
     </div>
     <div class="card-foot">
       <span class="card-date">${fmtDate(rm.createdAt)}</span>
@@ -1071,6 +1084,7 @@ function roadmapHtml(rm) {
       <span class="tag">🤖 ${esc(rm.model || 'AI')}</span>
       ${rm.mcpUsed ? `<span class="tag">⚡ superpowers methodology</span>` : ''}
       ${rm.review?.approved ? `<span class="tag tag-approved">🛡️ approved · ${esc(rm.review.score)}/10</span>` : ''}
+      ${reviewBadges(rm)}
       ${srcTag}
       <span class="tag">🗓 ${fmtDate(rm.createdAt)}</span>
     </div>
@@ -1190,7 +1204,9 @@ function openSettings() {
   api('/api/settings').then((s) => {
     $('#setBase').value = s.baseUrl || '';
     $('#setModel').value = s.model || '';
-    $('#setMcp').checked = s.useMcp !== false;
+    $('#setMethodology').value = s.methodologySource || 'auto';
+    $('#setSuperpowersPath').value = s.superpowersPath || '';
+    $('#setBudget').value = s.callCharBudget || 24000;
     $('#setMcpUrl').value = s.mcpUrl || '';
     $('#setComposioUrl').value = s.composioUrl || '';
     $('#setComposioKey').value = '';
@@ -1223,7 +1239,9 @@ $('#settingsSave').addEventListener('click', async () => {
         baseUrl: $('#setBase').value.trim(),
         apiKey: $('#setKey').value.trim(),
         model: $('#setModel').value.trim(),
-        useMcp: $('#setMcp').checked,
+        methodologySource: $('#setMethodology').value,
+        superpowersPath: $('#setSuperpowersPath').value.trim(),
+        callCharBudget: Number($('#setBudget').value) || 24000,
         mcpUrl: $('#setMcpUrl').value.trim(),
         composioUrl: $('#setComposioUrl').value.trim(),
         composioToken: $('#setComposioKey').value.trim(),
@@ -1234,26 +1252,52 @@ $('#settingsSave').addEventListener('click', async () => {
   } catch (e) { toast(e.message, 'err'); }
 });
 
+function methodologyStatusLine(st, requested) {
+  const ms = st.methodology || {};
+  const counts = [
+    ['brainstorming', 'brainstorming'],
+    ['writingPlans', 'writing-plans'],
+    ['usingSuperpowers', 'using-superpowers'],
+  ].filter(([k]) => ms.skills && ms.skills[k] != null)
+    .map(([k, label]) => `${label} ${Number(ms.skills[k]).toLocaleString()}`)
+    .join(' · ');
+  const chars = Number(ms.totalChars || 0).toLocaleString();
+  if (ms.source === 'off' && !ms.error) return '⚠️ Methodology off';
+  if (ms.ok && ms.source === 'local') return `✅ Local skills — ${chars} chars (${counts})`;
+  if (ms.ok && ms.source === 'mcp') {
+    return (requested === 'auto' || requested === 'local')
+      ? `⚠️ Local skills not found — MCP: ${st.superpowers?.serverName || 'MCP'}`
+      : `✅ MCP skills — ${chars} chars (${counts})`;
+  }
+  const where = ms.path ? ` at ${ms.path}` : '';
+  return `⚠️ Methodology${where}: ${ms.error || 'no source resolved — choose a source in Settings'}`;
+}
+
 $('#btnMcpTest').addEventListener('click', async () => {
   mcpStatusEl.className = 'mcp-status';
   mcpStatusEl.textContent = 'Testing systems…';
   try {
+    const requested = $('#setMethodology').value;
     await api('/api/settings', {
       method: 'POST',
       body: {
         baseUrl: $('#setBase').value.trim(),
         model: $('#setModel').value.trim(),
-        useMcp: $('#setMcp').checked,
+        methodologySource: requested,
         mcpUrl: $('#setMcpUrl').value.trim(),
         composioUrl: $('#setComposioUrl').value.trim(),
       },
     });
     const st = await api('/api/systems/status');
+    const ms = st.methodology || {};
     const lines = [];
     lines.push(st.ai.ok ? '✅ AI ready' : '⚠️ AI: add API key');
     lines.push(st.superpowers.ok ? `✅ Superpowers MCP — ${st.superpowers.toolCount} skills` : `⚠️ Superpowers: ${st.superpowers.error}`);
     lines.push(st.composio.ok ? `✅ Composio MCP — ${st.composio.toolCount} tools` : `ℹ️ Composio: ${st.composio.error}`);
-    const allOk = st.ai.ok && st.superpowers.ok;
+    lines.push(methodologyStatusLine(st, requested));
+    // A deliberate "off" choice is valid; only a real methodology failure is an error.
+    const methodologyOk = ms.ok === true || (ms.source === 'off' && !ms.error);
+    const allOk = st.ai.ok && st.superpowers.ok && methodologyOk;
     mcpStatusEl.className = 'mcp-status ' + (allOk ? 'ok' : 'err');
     mcpStatusEl.innerHTML = lines.map(esc).join('<br>');
   } catch (e) {
