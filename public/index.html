@@ -56,43 +56,6 @@
 
       </div>
 
-      <div class="agentbay hidden" id="agentbay" aria-live="polite">
-        <div class="agentbay-head">
-          <span class="spinner"></span>
-          <span id="bayTitle">Orchestrator is running the agent team…</span>
-        </div>
-        <div class="agents-grid" id="agentsGrid">
-          <div class="agent-card" data-agent="researcher">
-            <div class="ag-top">
-              <span class="ag-icon">🔎</span>
-              <div class="ag-name"><b>Agent 1 · Researcher</b><small>Composio MCP · Web Scraping & Browser</small></div>
-              <span class="ag-status st-waiting">waiting</span>
-            </div>
-            <div class="ag-detail"></div>
-          </div>
-          <div class="agent-card" data-agent="planner">
-            <div class="ag-top">
-              <span class="ag-icon">📐</span>
-              <div class="ag-name"><b>Agent 2 · Planner</b><small>Superpowers MCP · methodology</small></div>
-              <span class="ag-status st-waiting">waiting</span>
-            </div>
-            <div class="ag-detail"></div>
-          </div>
-          <div class="agent-card" data-agent="reviewer">
-            <div class="ag-top">
-              <span class="ag-icon">🛡️</span>
-              <div class="ag-name"><b>Agent 3 · Reviewer</b><small>QA · approval gate</small></div>
-              <span class="ag-status st-waiting">waiting</span>
-            </div>
-            <div class="ag-detail"></div>
-          </div>
-        </div>
-        <div class="activity">
-          <div class="activity-head">⚡ Live Activity</div>
-          <div class="activity-list" id="activityList"></div>
-        </div>
-      </div>
-
       <section class="library">
         <div class="library-head">
           <h2>Your roadmaps <span class="count-pill" id="libCount">0</span></h2>
@@ -107,8 +70,68 @@
       </section>
     </section>
 
+    <!-- INTERVIEW -->
+    <section id="view-interview" class="view hidden">
+      <div class="interview-shell">
+        <a href="#/" class="back-link">← Back</a>
+        <div class="interview-head">
+          <div class="hero-badge"><span class="pulse-dot"></span> Superpowers brainstorm</div>
+          <h1 class="interview-title">Before the roadmap, a few questions</h1>
+          <p class="interview-sub" id="interviewSub"></p>
+          <div class="q-progress" id="qProgress"></div>
+        </div>
+        <div class="chat" id="chat"></div>
+        <form class="answer-bar" id="answerForm" autocomplete="off">
+          <textarea id="answerInput" rows="2" placeholder="Type your answer…"></textarea>
+          <div class="answer-actions">
+            <button class="btn btn-ghost btn-sm" id="btnSkip" type="button">Skip</button>
+            <button class="btn btn-ghost btn-sm" id="btnDecide" type="button">You decide</button>
+            <button class="btn btn-primary" id="btnAnswer" type="submit">Send</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
     <!-- ROADMAP DETAIL -->
     <section id="view-roadmap" class="view hidden"></section>
+
+    <!-- AGENT BAY (shared: visible on home and interview views) -->
+    <div class="agentbay hidden" id="agentbay" aria-live="polite">
+      <div class="agentbay-head">
+        <span class="spinner"></span>
+        <span id="bayTitle">Orchestrator is running the agent team…</span>
+      </div>
+      <div class="agents-grid" id="agentsGrid">
+        <div class="agent-card" data-agent="researcher">
+          <div class="ag-top">
+            <span class="ag-icon">🔎</span>
+            <div class="ag-name"><b>Agent 1 · Researcher</b><small>Composio MCP · Web Scraping & Browser</small></div>
+            <span class="ag-status st-waiting">waiting</span>
+          </div>
+          <div class="ag-detail"></div>
+        </div>
+        <div class="agent-card" data-agent="planner">
+          <div class="ag-top">
+            <span class="ag-icon">📐</span>
+            <div class="ag-name"><b>Agent 2 · Planner</b><small>Superpowers MCP · methodology</small></div>
+            <span class="ag-status st-waiting">waiting</span>
+          </div>
+          <div class="ag-detail"></div>
+        </div>
+        <div class="agent-card" data-agent="reviewer">
+          <div class="ag-top">
+            <span class="ag-icon">🛡️</span>
+            <div class="ag-name"><b>Agent 3 · Reviewer</b><small>QA · approval gate</small></div>
+            <span class="ag-status st-waiting">waiting</span>
+          </div>
+          <div class="ag-detail"></div>
+        </div>
+      </div>
+      <div class="activity">
+        <div class="activity-head">⚡ Live Activity</div>
+        <div class="activity-list" id="activityList"></div>
+      </div>
+    </div>
   </main>
 
   <!-- SETTINGS MODAL -->

@@ -7,6 +7,7 @@ const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 
 const viewHome = $('#view-home');
 const viewRoadmap = $('#view-roadmap');
+const viewInterview = $('#view-interview');
 const genForm = $('#genForm');
 const genInput = $('#genInput');
 const genBtn = $('#genBtn');
@@ -18,6 +19,7 @@ const libCount = $('#libCount');
 const toastsEl = $('#toasts');
 
 let generating = false;
+let currentRun = null;
 
 /* ------------------------------------------------ utils */
 
@@ -64,14 +66,23 @@ async function api(path, opts = {}) {
 
 /* ------------------------------------------------ router */
 
+// Single toggle path: exactly one of home / roadmap / interview is ever shown.
+function showView(el) {
+  viewHome.classList.toggle('hidden', el !== viewHome);
+  viewRoadmap.classList.toggle('hidden', el !== viewRoadmap);
+  viewInterview.classList.toggle('hidden', el !== viewInterview);
+}
+
 function route() {
   const hash = location.hash || '#/';
-  let m = hash.match(/^#\/rm\/([A-Za-z0-9_-]+)$/);
+  let m = hash.match(/^#\/interview\/([A-Za-z0-9_-]+)$/);
+  if (m) return showInterview(m[1]);
+  stopPolling();
+  m = hash.match(/^#\/rm\/([A-Za-z0-9_-]+)$/);
   if (m) return showRoadmap(m[1]);
   m = hash.match(/^#\/run\/([A-Za-z0-9_-]+)$/);
   if (m) return showRun(m[1]);
-  viewHome.classList.remove('hidden');
-  viewRoadmap.classList.add('hidden');
+  showView(viewHome);
   document.title = 'RoadmapForge — any link → complete roadmap';
   window.scrollTo(0, 0);
 }
@@ -158,7 +169,7 @@ genForm.addEventListener('submit', (e) => {
   if (generating) return;
   const input = genInput.value.trim();
   if (!input) { genInput.focus(); toast('Paste a link or type a topic first', 'info'); return; }
-  generate(input);
+  startBrainstorm(input);
 });
 
 $$('.chip').forEach((chip) => {
@@ -169,22 +180,23 @@ $$('.chip').forEach((chip) => {
   });
 });
 
-async function generate(input) {
+async function streamGeneration(runId) {
+  if (generating) return; // one SSE stream per run/tab
   generating = true;
   genBtn.disabled = true;
   genBtn.textContent = 'Agents working…';
   agentbay.classList.remove('hidden');
   bayTitle.textContent = 'Orchestrator is running the agent team…';
   resetAgentCards();
-  $('#activityList').innerHTML = '';
-  addLog('orchestrator', 'Task received: ' + input);
+  const activityList = $('#activityList');
+  if (activityList) activityList.innerHTML = '';
+  addLog('orchestrator', 'Generation started for run: ' + runId);
   agentbay.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
   try {
-    const res = await fetch('/api/generate', {
+    const res = await fetch(`/api/generate/${runId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input }),
     });
     if (!res.ok || !res.body) {
       const err = await res.json().catch(() => ({}));
@@ -248,10 +260,21 @@ function handleEvent(evt) {
     addLog('orchestrator', `Artifact saved: ${evt.kind}`);
     return;
   }
+  if (evt.type === 'stage') {
+    let label = STAGE_LABEL[evt.stage] || evt.stage;
+    if (evt.stage === 'expand' && evt.total) label += ` (${evt.index}/${evt.total})`;
+    bayTitle.textContent = `Generation stage: ${label}`;
+    const status = $('#interviewStatus');
+    if (status) status.textContent = `Agents are working… ${label}`;
+    return;
+  }
   if (evt.type === 'error') {
     bayTitle.textContent = 'Pipeline failed';
-    toast(evt.message, 'err');
+    toast(`Generation stage failed: ${evt.message} — check Settings, then retry from the interview.`, 'err');
     endGenerate();
+    const status = $('#interviewStatus');
+    if (status) status.textContent = `Generation failed: ${evt.message} — use Retry generation to try again.`;
+    if (currentRun && !viewInterview.classList.contains('hidden')) renderRetryCard(currentRun.id);
     return;
   }
   if (evt.type === 'done') {
@@ -259,6 +282,7 @@ function handleEvent(evt) {
     genInput.value = '';
     setTimeout(() => {
       endGenerate();
+      stopPolling();
       location.hash = `#/run/${evt.run.id}`;
     }, 900);
   }
@@ -266,6 +290,7 @@ function handleEvent(evt) {
 
 function addLog(agent, message) {
   const list = $('#activityList');
+  if (!list) return; // SSE can stream while the home/interview view is hidden
   const el = document.createElement('div');
   el.className = 'log-line';
   el.innerHTML = `<span class="log-agent la-${esc(agent)}">${esc(agent)}</span><span class="log-msg">${esc(message)}</span><span class="log-ts">${fmtTime(Date.now())}</span>`;
@@ -281,6 +306,284 @@ function endGenerate() {
   loadLibrary();
 }
 
+/* ------------------------------------------------ interview (superpowers brainstorm) */
+
+// The answer form is static markup, so its listeners are bound exactly once.
+$('#answerForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = $('#answerInput');
+  const text = input.value.trim();
+  if (!text) { input.focus(); toast('Type an answer, or use Skip / You decide', 'info'); return; }
+  submitAnswer(text);
+});
+$('#btnSkip').addEventListener('click', () => submitAnswer('Skip'));
+$('#btnDecide').addEventListener('click', () => submitAnswer('You decide'));
+
+const STAGE_LABEL = {
+  methods: 'loading methodology',
+  expand: 'expanding phases',
+  revise: 'revising draft',
+  validate: 'validating roadmap',
+  repair: 'repairing gaps',
+};
+
+async function startBrainstorm(input) {
+  if (generating) return;
+  generating = true;
+  genBtn.disabled = true;
+  genBtn.textContent = 'Researching…';
+  try {
+    const res = await api('/api/brainstorm/start', { method: 'POST', body: { input } });
+    location.hash = `#/interview/${res.runId || res.run.id}`;
+  } catch (e) {
+    toast(`Brainstorm start failed: ${e.message} — check Settings, then retry.`, 'err');
+  } finally {
+    generating = false;
+    genBtn.disabled = false;
+    genBtn.textContent = 'Forge roadmap';
+  }
+}
+
+let pollTimer = null;
+let pollToken = 0;
+
+function stopPolling() {
+  pollToken++;
+  if (pollTimer !== null) { clearTimeout(pollTimer); pollTimer = null; }
+}
+
+// Refresh safety: never open a second SSE stream. Poll the saved run instead.
+function startPolling(runId) {
+  stopPolling();
+  const token = pollToken;
+  let polls = 0;
+  const tick = async () => {
+    if (token !== pollToken) return;
+    polls++;
+    try {
+      const run = await api(`/api/runs/${runId}`);
+      if (token !== pollToken) return;
+      currentRun = run;
+      if (run.stage === 'done') {
+        stopPolling();
+        location.hash = `#/run/${runId}`;
+        return;
+      }
+      if (run.stage === 'failed') {
+        stopPolling();
+        renderInterview(run);
+        return;
+      }
+      if (polls >= 20) {
+        stopPolling();
+        renderRetryCard(runId);
+        return;
+      }
+      const status = $('#interviewStatus');
+      if (status) status.textContent = 'Agents are working… checking progress.';
+      bayTitle.textContent = 'Agents are working… checking progress.';
+      pollTimer = setTimeout(tick, 2000);
+    } catch (e) {
+      if (token !== pollToken) return;
+      const status = $('#interviewStatus');
+      if (status) status.textContent = `Progress check failed: ${e.message} — retrying.`;
+      pollTimer = setTimeout(tick, 2000);
+    }
+  };
+  pollTimer = setTimeout(tick, 2000);
+}
+
+async function showInterview(id) {
+  stopPolling();
+  showView(viewInterview);
+  window.scrollTo(0, 0);
+  $('#interviewSub').textContent = '';
+  $('#qProgress').innerHTML = '';
+  $('#chat').innerHTML = '<div class="bubble ai">Loading interview…</div>';
+  $('#answerForm').classList.add('hidden');
+  let run;
+  try {
+    run = await api(`/api/runs/${id}`);
+  } catch (e) {
+    currentRun = null;
+    document.title = 'Interview unavailable — RoadmapForge';
+    $('#chat').innerHTML = `<div class="bubble ai">Interview stage could not load: ${esc(e.message)}. <a href="#/">Go back to the library</a> and start a new brainstorm.</div>`;
+    return;
+  }
+  if (run.stage === 'done') { location.hash = `#/run/${id}`; return; }
+  currentRun = run;
+  document.title = 'Brainstorm — RoadmapForge';
+  renderInterview(run);
+  // An SSE already streaming in this tab reports progress; only a refresh needs polling.
+  if (run.stage === 'generating' && !generating) startPolling(id);
+}
+
+function renderInterview(run) {
+  currentRun = run;
+  const stage = run.stage;
+  const answers = run.answers || [];
+  const pending = run.pendingQuestion;
+
+  $('#interviewSub').textContent = `Topic: ${run.input}`;
+  const dots = answers.length + (pending ? 1 : 0);
+  $('#qProgress').innerHTML = Array.from({ length: Math.max(dots, 1) }, (_, i) =>
+    `<span class="q-dot${i < answers.length || (pending && i === answers.length) ? ' on' : ''}"></span>`).join('');
+
+  let html = answers.map((a) => `
+    <div class="bubble ai"><span class="b-who">Interviewer</span>${esc(a.q)}</div>
+    <div class="bubble user"><span class="b-who">You</span>${esc(a.a)}</div>`).join('');
+
+  $('#answerForm').classList.toggle('hidden', stage !== 'questions');
+
+  if (stage === 'questions') {
+    if (pending) html += `<div class="bubble ai"><span class="b-who">Interviewer</span>${esc(pending)}</div>`;
+    html += `<div class="bubble ai"><span class="b-who">Status</span>Question ${answers.length + 1} — answer, skip, or let us decide.</div>`;
+    setAnswerBusy(false);
+  } else if (stage === 'playback') {
+    const pb = run.playback || {};
+    html += `<div class="bubble ai"><span class="b-who">Interviewer · playback</span>${esc(pb.summary || 'Here is what I understood:')}
+      ${(pb.bullets || []).length ? `<ul>${pb.bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}
+      ${(pb.openQuestions || []).length ? `<p><b>Open questions:</b> ${pb.openQuestions.map(esc).join(' · ')}</p>` : ''}</div>`;
+    html += `<div class="bubble user wide">
+      <b>Looks good?</b>
+      <div class="answer-actions">
+        <button class="btn btn-ghost btn-sm" id="btnChange" type="button">Change something</button>
+        <button class="btn btn-primary btn-sm" id="btnLooksRight" type="button">Looks right</button>
+      </div>
+      <div id="editBox" class="hidden" style="margin-top:10px">
+        <textarea id="editInput" rows="3" placeholder="What should change?" style="width:100%;resize:vertical;border:1px solid var(--border);border-radius:10px;background:rgba(7,7,13,.8);color:var(--text);font:inherit;padding:10px;outline:none"></textarea>
+        <div class="answer-actions"><button class="btn btn-primary btn-sm" id="btnSendEdit" type="button">Send corrections</button></div>
+      </div></div>`;
+  } else if (stage === 'approaches') {
+    const list = run.approaches || [];
+    html += `<div class="bubble ai"><span class="b-who">Interviewer · approaches</span>Pick the path you want the agents to plan.</div>`;
+    html += `<div class="approach-grid">${list.map((a) => `
+      <button class="approach${a.id === run.recommendedApproachId ? ' sel' : ''}" data-approach="${esc(a.id)}" type="button">
+        <b>${esc(a.title)}</b><span>${esc(a.description)}</span><small>${esc(a.tradeoffs)}</small>
+      </button>`).join('')}</div>`;
+    html += `<div class="answer-actions start"><button class="btn btn-primary btn-sm" id="btnContinue" type="button" ${list.length ? '' : 'disabled'}>Continue</button></div>`;
+  } else if (stage === 'ready') {
+    html += `<div class="bubble ai"><span class="b-who">Interviewer · ready</span>Approach chosen: <b>${esc(run.chosenApproach?.title || 'default')}</b>. Ready to build the roadmap.</div>`;
+    html += `<div class="bubble user wide"><button class="btn btn-primary" id="btnStartGen" type="button">Start generation</button></div>`;
+  } else if (stage === 'generating') {
+    html += `<div class="bubble ai"><span class="b-who">Generation stage</span><span id="interviewStatus">Agents are working…</span></div>`;
+  } else if (stage === 'failed') {
+    html += `<div class="bubble ai"><span class="b-who">Generation stage · failed</span>${esc(run.error || 'Unknown error')}<br>
+      <small>Next step: check Settings (AI endpoint, key, model, methodology), then retry generation.</small></div>`;
+    html += `<div class="bubble user wide"><button class="btn btn-primary" id="btnRetry" type="button">Retry generation</button></div>`;
+  } else {
+    html += `<div class="bubble ai"><span class="b-who">Stage: ${esc(stage)}</span>No controls for this stage yet. <a href="#/">Go back to the library</a> and start a new brainstorm for this topic.</div>`;
+  }
+
+  $('#chat').innerHTML = html;
+
+  if (stage === 'playback') {
+    $('#btnLooksRight')?.addEventListener('click', () => confirmPlayback('approve'));
+    $('#btnChange')?.addEventListener('click', () => $('#editBox')?.classList.remove('hidden'));
+    $('#btnSendEdit')?.addEventListener('click', () => {
+      const edits = ($('#editInput')?.value || '').trim();
+      if (!edits) { toast('Describe what should change', 'info'); return; }
+      confirmPlayback('edit', edits);
+    });
+  } else if (stage === 'approaches') {
+    const cards = $$('.approach', $('#chat'));
+    cards.forEach((card) => card.addEventListener('click', () => {
+      cards.forEach((c) => c.classList.toggle('sel', c === card));
+    }));
+    $('#btnContinue')?.addEventListener('click', () => {
+      const sel = $('.approach.sel', $('#chat'));
+      if (!sel) { toast('Pick an approach first', 'info'); return; }
+      chooseApproach(sel.dataset.approach);
+    });
+  } else if (stage === 'ready') {
+    $('#btnStartGen')?.addEventListener('click', () => {
+      currentRun = { ...run, stage: 'generating' };
+      renderInterview(currentRun);
+      streamGeneration(run.id);
+    });
+  } else if (stage === 'failed') {
+    $('#btnRetry')?.addEventListener('click', () => {
+      currentRun = { ...run, stage: 'generating' };
+      renderInterview(currentRun);
+      streamGeneration(run.id);
+    });
+  }
+}
+
+function setAnswerBusy(busy) {
+  ['#answerInput', '#btnAnswer', '#btnSkip', '#btnDecide'].forEach((sel) => {
+    const el = $(sel);
+    if (el) el.disabled = busy;
+  });
+}
+
+async function submitAnswer(text) {
+  if (!currentRun) return;
+  const runId = currentRun.id;
+  setAnswerBusy(true);
+  try {
+    const res = await api(`/api/runs/${runId}/answer`, { method: 'POST', body: { answer: text } });
+    currentRun = res.run;
+    renderInterview(res.run);
+    const input = $('#answerInput');
+    if (input) { input.value = ''; input.focus(); }
+  } catch (e) {
+    toast(`Question stage failed: ${e.message} — try again or go Back.`, 'err');
+  } finally {
+    setAnswerBusy(false);
+  }
+}
+
+async function confirmPlayback(action, edits) {
+  if (!currentRun) return;
+  const runId = currentRun.id;
+  const buttons = ['#btnLooksRight', '#btnChange', '#btnSendEdit'].map((s) => $(s)).filter(Boolean);
+  buttons.forEach((b) => { b.disabled = true; });
+  try {
+    const res = await api(`/api/runs/${runId}/confirm`, { method: 'POST', body: { action, edits } });
+    currentRun = res.run;
+    renderInterview(res.run);
+  } catch (e) {
+    toast(`Playback stage failed: ${e.message} — try again or go Back.`, 'err');
+    buttons.forEach((b) => { b.disabled = false; });
+  }
+}
+
+async function chooseApproach(id) {
+  if (!currentRun) return;
+  const runId = currentRun.id;
+  const btn = $('#btnContinue');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await api(`/api/runs/${runId}/approach`, { method: 'POST', body: { approachId: id } });
+    currentRun = { ...res.run, stage: 'generating' };
+    renderInterview(currentRun);
+    streamGeneration(runId);
+  } catch (e) {
+    toast(`Approach stage failed: ${e.message} — pick another approach and try again.`, 'err');
+    if (btn) btn.disabled = false;
+  }
+}
+
+function renderRetryCard(runId) {
+  const chat = $('#chat');
+  if (!chat || $('#btnRetryPoll')) return;
+  const el = document.createElement('div');
+  el.className = 'bubble ai';
+  el.innerHTML = `<span class="b-who">Generation stage</span>
+    Agents are taking longer than expected. Check the run status, then retry generation — the server rejects a real duplicate.
+    <div class="answer-actions start"><button class="btn btn-primary btn-sm" id="btnRetryPoll" type="button">Retry generation</button></div>`;
+  chat.appendChild(el);
+  $('#btnRetryPoll').addEventListener('click', () => {
+    $('#btnRetryPoll').disabled = true;
+    if (currentRun) {
+      currentRun = { ...currentRun, stage: 'generating' };
+      renderInterview(currentRun);
+    }
+    streamGeneration(runId);
+  });
+}
+
 $('#btnDemo').addEventListener('click', async () => {
   try {
     const rm = await api('/api/demo', { method: 'POST', body: {} });
@@ -294,8 +597,7 @@ $('#btnDemo').addEventListener('click', async () => {
 let currentRm = null;
 
 async function showRun(id) {
-  viewHome.classList.add('hidden');
-  viewRoadmap.classList.remove('hidden');
+  showView(viewRoadmap);
   window.scrollTo(0, 0);
   viewRoadmap.innerHTML = `<div class="rm-head" style="color:var(--text-faint)">Loading run…</div>`;
   let run;
@@ -451,8 +753,7 @@ function bindRunDashboard(run) {
 /* ------------------------------------------------ roadmap view */
 
 async function showRoadmap(id) {
-  viewHome.classList.add('hidden');
-  viewRoadmap.classList.remove('hidden');
+  showView(viewRoadmap);
   window.scrollTo(0, 0);
   viewRoadmap.innerHTML = `<div class="rm-head" style="color:var(--text-faint)">Loading roadmap…</div>`;
   let rm;
